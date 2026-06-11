@@ -17,8 +17,17 @@ func NameFromHost(host string) (string, bool) {
 	if !strings.HasSuffix(host, ".xns") {
 		return "", false
 	}
-	name := strings.TrimSuffix(host, ".xns")
-	if strings.Contains(name, ".") || ValidName(name) != nil {
+	labels := strings.Split(strings.TrimSuffix(host, ".xns"), ".")
+	if len(labels) == 0 {
+		return "", false
+	}
+	for _, label := range labels[:len(labels)-1] {
+		if !validHostLabel(label) {
+			return "", false
+		}
+	}
+	name := labels[len(labels)-1]
+	if ValidName(name) != nil {
 		return "", false
 	}
 	return name, true
@@ -65,6 +74,18 @@ func OnionFromOwnerKey(ownerHex string) (string, error) {
 
 func isNameEdge(c byte) bool {
 	return c >= 'a' && c <= 'z' || c >= '0' && c <= '9'
+}
+
+func validHostLabel(label string) bool {
+	if len(label) < 1 || len(label) > 63 {
+		return false
+	}
+	for i := range len(label) {
+		if !isNameEdge(label[i]) && label[i] != '-' {
+			return false
+		}
+	}
+	return isNameEdge(label[0]) && isNameEdge(label[len(label)-1])
 }
 
 func invalidPoint(reason string) error {

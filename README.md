@@ -40,15 +40,16 @@ The indeXer is the only required option. Tor is expected at
 --mtu N             TUN MTU
 ```
 
-Once running, applications can use `name.xns` directly. TCP is forwarded to the
-Tor v3 onion address derived from the name's XNS owner key. The original
-hostname remains in the application protocol, so an HTTP onion service can
-accept `Host: name.xns`.
+Once running, applications can use `name.xns` and its subdomains directly. For
+`indexer.name.xns`, the rightmost label before `.xns` is the claimed XNS name,
+while `indexer` is preserved for the application. Both are routed to the onion
+address derived from `name`, and an HTTP service receives the original
+`Host: indexer.name.xns` header.
 
-Only single-label XNS names are resolved. The cache is memory-only and is empty
-after every restart. Finalized records are cached until their estimated
-expiration; records with fewer than 10 confirmations are checked again after
-one minute.
+Subdomain existence is decided by the service's virtual-host configuration,
+not by XNS Resolver. The cache is memory-only and is empty after every restart.
+Finalized records are cached until their estimated expiration; records with
+fewer than 10 confirmations are checked again after one minute.
 
 ## XNS
 

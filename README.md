@@ -1,58 +1,58 @@
-# TSR (The Sovereign Router)
+# XNS Resolver
 
-## Why and How
+XNS Resolver makes XNS names usable as native Tor addresses on Linux. A name
+such as `example.xns` is looked up through an XNS indeXer, converted from its
+Ed25519 owner key to the corresponding Tor v3 onion address, and routed through
+Tor without application-specific XNS support.
 
-Normally, if you want to benefit from the beauty of onion services or eepsites in a program, you have three choices:
-- Implement native Tor/I2P support to the source code
-- Sniff and modify packets on the fly to route through the desired network's proxy.
-- Route all traffic over the desired network's proxy.
+It is a fork of [TSR](https://github.com/aeeravsar/TSR), reduced to the single
+purpose of resolving XNS names over Tor.
 
-With the first option, you have to patch the program's source code to handle the ".onion"/".b32.i2p" domains to route through the relevant network's proxy. If the program is not open source, or you don't want to recompile the program for every release just to achieve something very fundamental, you would go for the second option, try to hijack packets on the fly to use the relevant network's proxy, this again is a precision surgery operation. Or you could go for the third option, the easiest one everyone uses, running the program to use the proxy for everything. But what if the program requires more than one network? Now you have to route even the clearnet packets over Tor, or worse, can't even use clearnet on I2P if you haven't setup an I2P outproxy.
+## Requirements
 
-But there is a smarter way. Instead of going deep and messing with individual programs, we can change the ground things operate in. TSR achieves that by managing the system's DNS to route specified domains through it's own handler, which creates a TUN device to allocate a specified virtual IP range to map the domains to the virtual IPs, then when a program connects to a virtual IP, TSR opens a connection over the specified proxy to the mapped address, and forwards the packet.
+- Linux with `systemd-resolved`
+- Tor with a SOCKS5 listener
+- Root privileges for TUN and routing setup
+- An XNS indeXer URL
 
-This, in practice, lets your OS natively speak the I2P/Tor language. Now you can use any program/service over these networks seamlessly. Imagine how seamless it is now to just `ssh user@host.i2p`, or use an onion Monero node in a wallet program that doesn't natively support it.
+## Build
 
-## Usage
-
-**Warning:** Currently only systemd-resolved is supported.
-
-Compile:
+```sh
+go build -o xns-resolver ./cmd/xns-resolver
 ```
-go build -o tsrd ./cmd/tsrd
-```
-Generate config:
-```
-sudo mkdir -p /etc/tsr
-sudo ./tsrd --generate-config /etc/tsr/config.toml
-```
-You might want to edit the config to add different routes or change default parameters, here is the default config:
-```
-[dns]
-listen = "10.203.0.1:53"
 
-[net]
-tun = "tsr0"
-cidr = "10.203.0.0/16"
-gateway = "10.203.0.1"
-mtu = 1500
+## Run
 
-[[route]]
-name = "tor"
-domains = [".onion"]
-proxy = "socks5://127.0.0.1:9050"
-
-[[alias]]
-target = ".onion"
-domains = [".onio", ".onionn"]
-
-[[route]]
-name = "i2p"
-domains = [".i2p", ".b32.i2p"]
-proxy = "http://127.0.0.1:4444"
-``` 
-Run TSR:
+```sh
+sudo ./xns-resolver --indexer https://indexer.xns.rocks
 ```
-sudo ./tsrd --config /etc/tsr/config.toml
+
+The indeXer is the only required option. Tor is expected at
+`socks5://127.0.0.1:9050` by default.
+
+```text
+--indexer URL       XNS indeXer URL
+--tor-proxy URL     Tor SOCKS5 proxy URL
+--tun NAME          TUN interface name
+--cidr CIDR         virtual IPv4 range
+--gateway IP        virtual gateway address
+--dns HOST:PORT     DNS listener on the virtual gateway
+--mtu N             TUN MTU
 ```
-Congrats, now your OS can speak I2P/Tor natively.
+
+Once running, applications can use `name.xns` directly. TCP is forwarded to the
+Tor v3 onion address derived from the name's XNS owner key. The original
+hostname remains in the application protocol, so an HTTP onion service can
+accept `Host: name.xns`.
+
+Only single-label XNS names are resolved. The cache is memory-only and is empty
+after every restart. Finalized records are cached until their estimated
+expiration; records with fewer than 10 confirmations are checked again after
+one minute.
+
+## XNS
+
+- [Website](https://xns.rocks)
+- [Documentation](https://xns.rocks/docs)
+- [Source code](https://github.com/exilens/xns)
+- [Donate](https://xns.rocks/donate)

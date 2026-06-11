@@ -11,7 +11,7 @@ import (
 
 	"github.com/miekg/dns"
 
-	"tsr/internal/mapstore"
+	"github.com/exilens/xns-resolver/internal/mapstore"
 )
 
 type Server struct {
@@ -84,15 +84,15 @@ func (s *Server) handle(w dns.ResponseWriter, req *dns.Msg) {
 		switch q.Qtype {
 		case dns.TypeA:
 			resp.Answer = append(resp.Answer, &dns.A{
-				Hdr: dns.RR_Header{Name: q.Name, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 60},
+				Hdr: dns.RR_Header{Name: q.Name, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: entry.TTL},
 				A:   net.IP(entry.IP.AsSlice()).To4(),
 			})
-			log.Printf("dns map %s -> %s via %s", host, entry.IP, entry.Route.Name)
+			log.Printf("dns map %s -> %s -> %s", host, entry.IP, entry.Destination)
 		case dns.TypeAAAA:
 			// IPv6 is intentionally unsupported. Return a successful
 			// empty answer so clients may continue with A.
 		default:
-			// TSR is authoritative only for address routing.
+			// XNS Resolver is authoritative only for address routing.
 		}
 	}
 

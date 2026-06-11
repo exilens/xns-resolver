@@ -1,117 +1,126 @@
 package mapstore
 
 import (
+	"context"
 	"encoding/binary"
 	"errors"
 	"fmt"
 	"hash/fnv"
 	"math"
 	"net/netip"
+	"net/url"
 	"strings"
 	"sync"
+	"time"
 
-	"tsr/internal/config"
+	"github.com/exilens/xns-resolver/internal/xns"
 )
 
+const dnsTTL = 60
+
 type Entry struct {
-	IP       netip.Addr
-	Host     string
-	Route    config.RuntimeRoute
-	LastPort uint16
+	IP          netip.Addr
+	Name        string
+	Destination string
+	Proxy       *url.URL
+	TTL         uint32
+	ExpiresAt   time.Time
 }
 
 type Store struct {
 	mu       sync.RWMutex
 	prefix   netip.Prefix
 	gateway  netip.Addr
-	routes   []config.RuntimeRoute
-	aliases  []config.RuntimeAlias
-	byHost   map[string]Entry
+	proxy    *url.URL
+	resolver *xns.Client
+	byName   map[string]Entry
 	byIP     map[netip.Addr]Entry
 	capacity uint32
 }
 
-func New(prefix netip.Prefix, gateway netip.Addr, routes []config.RuntimeRoute, aliases []config.RuntimeAlias) (*Store, error) {
+func New(prefix netip.Prefix, gateway netip.Addr, proxy *url.URL, resolver *xns.Client) (*Store, error) {
 	ones := prefix.Bits()
 	if ones < 16 || ones > 30 {
-		return nil, errors.New("net.cidr must have prefix length between /16 and /30")
+		return nil, errors.New("virtual network must have prefix length between /16 and /30")
+	}
+	if proxy == nil || resolver == nil {
+		return nil, errors.New("proxy and resolver are required")
 	}
 	capacity := uint32(1) << uint32(32-ones)
-	if capacity < 4 {
-		return nil, errors.New("net.cidr has no usable host addresses")
-	}
 	return &Store{
 		prefix:   prefix.Masked(),
 		gateway:  gateway,
-		routes:   append([]config.RuntimeRoute(nil), routes...),
-		aliases:  append([]config.RuntimeAlias(nil), aliases...),
-		byHost:   map[string]Entry{},
-		byIP:     map[netip.Addr]Entry{},
+		proxy:    proxy,
+		resolver: resolver,
+		byName:   make(map[string]Entry),
+		byIP:     make(map[netip.Addr]Entry),
 		capacity: capacity,
 	}, nil
 }
 
 func (s *Store) Resolve(host string) (Entry, bool, error) {
-	host = normalizeHost(host)
-	host = s.canonicalHost(host)
-	route, ok := s.MatchRoute(host)
+	name, ok := xns.NameFromHost(host)
 	if !ok {
 		return Entry{}, false, nil
 	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if e, ok := s.byHost[host]; ok {
-		return e, true, nil
+	now := time.Now()
+	s.mu.RLock()
+	entry, cached := s.byName[name]
+	s.mu.RUnlock()
+	if cached && now.Before(entry.ExpiresAt) {
+		entry.TTL = ttl(entry.ExpiresAt, now)
+		return entry, true, nil
 	}
 
-	ip, err := s.allocateLocked(host)
+	result, err := s.resolver.Lookup(context.Background(), name)
+	if errors.Is(err, xns.ErrNotFound) {
+		s.remove(name)
+		return Entry{}, false, nil
+	}
 	if err != nil {
 		return Entry{}, true, err
 	}
-	e := Entry{IP: ip, Host: host, Route: route}
-	s.byHost[host] = e
-	s.byIP[ip] = e
-	return e, true, nil
-}
 
-func (s *Store) canonicalHost(host string) string {
-	for _, alias := range s.aliases {
-		for _, domain := range alias.Domains {
-			base := strings.TrimPrefix(domain, ".")
-			if host == base {
-				return strings.TrimPrefix(alias.Target, ".")
-			}
-			if strings.HasSuffix(host, domain) {
-				return strings.TrimSuffix(host, domain) + alias.Target
-			}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	entry, cached = s.byName[name]
+	if !cached {
+		ip, err := s.allocateLocked(name)
+		if err != nil {
+			return Entry{}, true, err
 		}
+		entry = Entry{IP: ip, Name: name, Proxy: s.proxy}
 	}
-	return host
+	entry.Destination = result.Onion
+	entry.ExpiresAt = result.CacheUntil
+	entry.TTL = ttl(entry.ExpiresAt, now)
+	s.byName[name] = entry
+	s.byIP[entry.IP] = entry
+	return entry, true, nil
 }
 
 func (s *Store) LookupIP(ip netip.Addr) (Entry, bool) {
 	s.mu.RLock()
-	defer s.mu.RUnlock()
-	e, ok := s.byIP[ip]
-	return e, ok
-}
-
-func (s *Store) MatchRoute(host string) (config.RuntimeRoute, bool) {
-	host = normalizeHost(host)
-	for _, r := range s.routes {
-		for _, domain := range r.Domains {
-			if host == strings.TrimPrefix(domain, ".") || strings.HasSuffix(host, domain) {
-				return r, true
-			}
-		}
+	entry, ok := s.byIP[ip]
+	s.mu.RUnlock()
+	if !ok || !time.Now().Before(entry.ExpiresAt) {
+		return Entry{}, false
 	}
-	return config.RuntimeRoute{}, false
+	return entry, true
 }
 
-func (s *Store) allocateLocked(host string) (netip.Addr, error) {
-	start := hashHost(host) % s.capacity
+func (s *Store) remove(name string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if entry, ok := s.byName[name]; ok {
+		delete(s.byIP, entry.IP)
+		delete(s.byName, name)
+	}
+}
+
+func (s *Store) allocateLocked(name string) (netip.Addr, error) {
+	start := hashName(name) % s.capacity
 	for i := uint32(0); i < s.capacity; i++ {
 		offset := (start + i) % s.capacity
 		ip := addIPv4(s.prefix.Addr(), offset)
@@ -130,23 +139,27 @@ func (s *Store) usable(ip netip.Addr) bool {
 		return false
 	}
 	base := ipv4ToUint32(s.prefix.Addr())
-	v := ipv4ToUint32(ip)
-	if v == base {
-		return false
-	}
-	if s.prefix.Bits() < 31 && v == base+s.capacity-1 {
-		return false
-	}
-	return true
+	value := ipv4ToUint32(ip)
+	return value != base && (s.prefix.Bits() >= 31 || value != base+s.capacity-1)
 }
 
-func normalizeHost(s string) string {
-	return strings.ToLower(strings.TrimSuffix(strings.TrimSpace(s), "."))
+func ttl(expires, now time.Time) uint32 {
+	if !expires.After(now) {
+		return 1
+	}
+	seconds := uint64(expires.Sub(now) / time.Second)
+	if seconds == 0 {
+		return 1
+	}
+	if seconds > dnsTTL {
+		return dnsTTL
+	}
+	return uint32(seconds)
 }
 
-func hashHost(host string) uint32 {
+func hashName(name string) uint32 {
 	h := fnv.New32a()
-	_, _ = h.Write([]byte(host))
+	_, _ = h.Write([]byte(strings.ToLower(name)))
 	return h.Sum32()
 }
 
@@ -159,11 +172,11 @@ func ipv4ToUint32(addr netip.Addr) uint32 {
 	return binary.BigEndian.Uint32(a[:])
 }
 
-func uint32ToIPv4(v uint32) netip.Addr {
-	if v == math.MaxUint32 {
+func uint32ToIPv4(value uint32) netip.Addr {
+	if value == math.MaxUint32 {
 		return netip.AddrFrom4([4]byte{255, 255, 255, 255})
 	}
-	var b [4]byte
-	binary.BigEndian.PutUint32(b[:], v)
-	return netip.AddrFrom4(b)
+	var raw [4]byte
+	binary.BigEndian.PutUint32(raw[:], value)
+	return netip.AddrFrom4(raw)
 }

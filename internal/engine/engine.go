@@ -12,8 +12,8 @@ import (
 	"github.com/xjasonlyu/tun2socks/v2/tunnel/statistic"
 	"gvisor.dev/gvisor/pkg/tcpip/stack"
 
-	"tsr/internal/mapstore"
-	"tsr/internal/socksdial"
+	"github.com/exilens/xns-resolver/internal/mapstore"
+	"github.com/exilens/xns-resolver/internal/socksdial"
 )
 
 type Engine struct {

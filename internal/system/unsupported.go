@@ -16,9 +16,9 @@ type Setup struct {
 }
 
 func Up(Setup) error {
-	return errors.New("TSR is Linux-only")
+	return errors.New("xns-resolver is Linux-only")
 }
 
 func Down(Setup) error {
-	return errors.New("TSR is Linux-only")
+	return errors.New("xns-resolver is Linux-only")
 }

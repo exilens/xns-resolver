@@ -5,12 +5,24 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"hash/crc32"
 	"strings"
 
 	"golang.org/x/crypto/sha3"
 )
 
 const onionVersion = byte(3)
+
+func DestinationFromOwnerKey(ownerHex, network string) (string, error) {
+	switch network {
+	case "tor":
+		return OnionFromOwnerKey(ownerHex)
+	case "i2p":
+		return I2PFromOwnerKey(ownerHex)
+	default:
+		return "", errors.New("network must be tor or i2p")
+	}
+}
 
 func NameFromHost(host string) (string, bool) {
 	host = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(host), "."))
@@ -50,14 +62,8 @@ func ValidName(name string) error {
 }
 
 func OnionFromOwnerKey(ownerHex string) (string, error) {
-	owner, err := hex.DecodeString(ownerHex)
+	owner, err := ownerKey(ownerHex)
 	if err != nil {
-		return "", err
-	}
-	if len(owner) != 32 {
-		return "", errors.New("owner key must be 32 bytes")
-	}
-	if err := validOwnerPoint(owner); err != nil {
 		return "", err
 	}
 
@@ -70,6 +76,37 @@ func OnionFromOwnerKey(ownerHex string) (string, error) {
 	raw = append(raw, onionVersion)
 	hostname := base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(raw)
 	return strings.ToLower(hostname) + ".onion", nil
+}
+
+func I2PFromOwnerKey(ownerHex string) (string, error) {
+	owner, err := ownerKey(ownerHex)
+	if err != nil {
+		return "", err
+	}
+	raw := make([]byte, 35)
+	raw[1] = 7
+	raw[2] = 11
+	copy(raw[3:], owner)
+	sum := crc32.ChecksumIEEE(owner)
+	raw[0] ^= byte(sum)
+	raw[1] ^= byte(sum >> 8)
+	raw[2] ^= byte(sum >> 16)
+	hostname := base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(raw)
+	return strings.ToLower(hostname) + ".b32.i2p", nil
+}
+
+func ownerKey(ownerHex string) ([]byte, error) {
+	owner, err := hex.DecodeString(ownerHex)
+	if err != nil {
+		return nil, err
+	}
+	if len(owner) != 32 {
+		return nil, errors.New("owner key must be 32 bytes")
+	}
+	if err := validOwnerPoint(owner); err != nil {
+		return nil, err
+	}
+	return owner, nil
 }
 
 func isNameEdge(c byte) bool {

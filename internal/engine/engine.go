@@ -13,7 +13,7 @@ import (
 	"gvisor.dev/gvisor/pkg/tcpip/stack"
 
 	"github.com/exilens/xns-resolver/internal/mapstore"
-	"github.com/exilens/xns-resolver/internal/socksdial"
+	"github.com/exilens/xns-resolver/internal/netdial"
 )
 
 type Engine struct {
@@ -22,14 +22,14 @@ type Engine struct {
 	tun    *tunnel.Tunnel
 }
 
-func Start(_ context.Context, name string, mtu uint32, store *mapstore.Store) (*Engine, error) {
+func Start(_ context.Context, name string, mtu uint32, store *mapstore.Store, transport netdial.Transport) (*Engine, error) {
 	tunlog.SetLogger(tunlog.Must(tunlog.NewLeveled(tunlog.SilentLevel)))
 
 	dev, err := tun.Open(name, mtu)
 	if err != nil {
 		return nil, err
 	}
-	t := tunnel.New(socksdial.New(store), statistic.DefaultManager)
+	t := tunnel.New(netdial.New(store, transport), statistic.DefaultManager)
 	st, err := core.CreateStack(&core.Config{
 		LinkEndpoint:     dev,
 		TransportHandler: t,

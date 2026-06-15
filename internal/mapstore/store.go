@@ -8,7 +8,6 @@ import (
 	"hash/fnv"
 	"math"
 	"net/netip"
-	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -22,7 +21,6 @@ type Entry struct {
 	IP          netip.Addr
 	Name        string
 	Destination string
-	Proxy       *url.URL
 	TTL         uint32
 	ExpiresAt   time.Time
 }
@@ -31,26 +29,24 @@ type Store struct {
 	mu       sync.RWMutex
 	prefix   netip.Prefix
 	gateway  netip.Addr
-	proxy    *url.URL
 	resolver *xns.Client
 	byName   map[string]Entry
 	byIP     map[netip.Addr]Entry
 	capacity uint32
 }
 
-func New(prefix netip.Prefix, gateway netip.Addr, proxy *url.URL, resolver *xns.Client) (*Store, error) {
+func New(prefix netip.Prefix, gateway netip.Addr, resolver *xns.Client) (*Store, error) {
 	ones := prefix.Bits()
 	if ones < 16 || ones > 30 {
 		return nil, errors.New("virtual network must have prefix length between /16 and /30")
 	}
-	if proxy == nil || resolver == nil {
-		return nil, errors.New("proxy and resolver are required")
+	if resolver == nil {
+		return nil, errors.New("resolver is required")
 	}
 	capacity := uint32(1) << uint32(32-ones)
 	return &Store{
 		prefix:   prefix.Masked(),
 		gateway:  gateway,
-		proxy:    proxy,
 		resolver: resolver,
 		byName:   make(map[string]Entry),
 		byIP:     make(map[netip.Addr]Entry),
@@ -90,9 +86,9 @@ func (s *Store) Resolve(host string) (Entry, bool, error) {
 		if err != nil {
 			return Entry{}, true, err
 		}
-		entry = Entry{IP: ip, Name: name, Proxy: s.proxy}
+		entry = Entry{IP: ip, Name: name}
 	}
-	entry.Destination = result.Onion
+	entry.Destination = result.Destination
 	entry.ExpiresAt = result.CacheUntil
 	entry.TTL = ttl(entry.ExpiresAt, now)
 	s.byName[name] = entry

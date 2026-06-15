@@ -22,12 +22,13 @@ const (
 var ErrNotFound = errors.New("XNS name is not claimed")
 
 type Result struct {
-	Onion      string
-	CacheUntil time.Time
+	Destination string
+	CacheUntil  time.Time
 }
 
 type Client struct {
 	indexer string
+	network string
 	http    *http.Client
 }
 
@@ -40,7 +41,7 @@ type lookupResponse struct {
 	SourceTxIDs     []string `json:"source_txids"`
 }
 
-func New(indexer string) (*Client, error) {
+func New(indexer, network string) (*Client, error) {
 	indexer = strings.TrimRight(indexer, "/")
 	parsed, err := url.Parse(indexer)
 	if err != nil {
@@ -52,8 +53,12 @@ func New(indexer string) (*Client, error) {
 	if parsed.RawQuery != "" || parsed.Fragment != "" {
 		return nil, errors.New("indeXer URL must not contain a query or fragment")
 	}
+	if network != "tor" && network != "i2p" {
+		return nil, errors.New("network must be tor or i2p")
+	}
 	return &Client{
 		indexer: indexer,
+		network: network,
 		http:    &http.Client{Timeout: requestTimeout},
 	}, nil
 }
@@ -93,7 +98,7 @@ func (c *Client) Lookup(ctx context.Context, name string) (Result, error) {
 	if out.RemainingBlocks == 0 {
 		return Result{}, ErrNotFound
 	}
-	onion, err := OnionFromOwnerKey(out.OwnerKey)
+	destination, err := DestinationFromOwnerKey(out.OwnerKey, c.network)
 	if err != nil {
 		return Result{}, fmt.Errorf("invalid owner key from indeXer: %w", err)
 	}
@@ -105,7 +110,7 @@ func (c *Client) Lookup(ctx context.Context, name string) (Result, error) {
 	if !out.Finalized && lifetime > unfinalizedCache {
 		lifetime = unfinalizedCache
 	}
-	return Result{Onion: onion, CacheUntil: time.Now().Add(lifetime)}, nil
+	return Result{Destination: destination, CacheUntil: time.Now().Add(lifetime)}, nil
 }
 
 func durationForBlocks(blocks uint64) time.Duration {

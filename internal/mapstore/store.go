@@ -32,18 +32,18 @@ type Store struct {
 	resolver *xns.Client
 	byName   map[string]Entry
 	byIP     map[netip.Addr]Entry
-	capacity uint32
+	capacity uint64
 }
 
 func New(prefix netip.Prefix, gateway netip.Addr, resolver *xns.Client) (*Store, error) {
 	ones := prefix.Bits()
-	if ones < 16 || ones > 30 {
-		return nil, errors.New("virtual network must have prefix length between /16 and /30")
+	if ones > 30 {
+		return nil, errors.New("virtual network must have prefix length no greater than /30")
 	}
 	if resolver == nil {
 		return nil, errors.New("resolver is required")
 	}
-	capacity := uint32(1) << uint32(32-ones)
+	capacity := uint64(1) << uint32(32-ones)
 	return &Store{
 		prefix:   prefix.Masked(),
 		gateway:  gateway,
@@ -116,8 +116,8 @@ func (s *Store) remove(name string) {
 }
 
 func (s *Store) allocateLocked(name string) (netip.Addr, error) {
-	start := hashName(name) % s.capacity
-	for i := uint32(0); i < s.capacity; i++ {
+	start := uint64(hashName(name)) % s.capacity
+	for i := uint64(0); i < s.capacity; i++ {
 		offset := (start + i) % s.capacity
 		ip := addIPv4(s.prefix.Addr(), offset)
 		if !s.usable(ip) {
@@ -134,8 +134,8 @@ func (s *Store) usable(ip netip.Addr) bool {
 	if !s.prefix.Contains(ip) || ip == s.gateway {
 		return false
 	}
-	base := ipv4ToUint32(s.prefix.Addr())
-	value := ipv4ToUint32(ip)
+	base := uint64(ipv4ToUint32(s.prefix.Addr()))
+	value := uint64(ipv4ToUint32(ip))
 	return value != base && (s.prefix.Bits() >= 31 || value != base+s.capacity-1)
 }
 
@@ -159,8 +159,8 @@ func hashName(name string) uint32 {
 	return h.Sum32()
 }
 
-func addIPv4(base netip.Addr, offset uint32) netip.Addr {
-	return uint32ToIPv4(ipv4ToUint32(base) + offset)
+func addIPv4(base netip.Addr, offset uint64) netip.Addr {
+	return uint32ToIPv4(uint32(uint64(ipv4ToUint32(base)) + offset))
 }
 
 func ipv4ToUint32(addr netip.Addr) uint32 {

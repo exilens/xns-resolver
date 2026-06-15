@@ -162,8 +162,8 @@ func validate(opts options) (config, error) {
 		return cfg, fmt.Errorf("--cidr: %w", err)
 	}
 	prefix = prefix.Masked()
-	if !prefix.Addr().Is4() || prefix.Bits() < 16 || prefix.Bits() > 30 {
-		return cfg, errors.New("--cidr must be IPv4 with prefix length between /16 and /30")
+	if !prefix.Addr().Is4() || prefix.Bits() > 30 {
+		return cfg, errors.New("--cidr must be IPv4 with prefix length no greater than /30")
 	}
 	gateway, err := netip.ParseAddr(opts.gateway)
 	if err != nil {

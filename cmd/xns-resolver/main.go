@@ -112,7 +112,7 @@ func run() error {
 		}
 	}()
 
-	dnsSrv := dnsx.New(cfg.dns.String(), store)
+	dnsSrv := dnsx.New(cfg.dns.String(), store, transport)
 	if err := dnsSrv.Start(); err != nil {
 		return err
 	}

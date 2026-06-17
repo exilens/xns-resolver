@@ -46,6 +46,11 @@ Once running, applications can use `name.xns` and its subdomains directly. For
 while `indexer` is preserved for the application. The HTTP service receives
 the original `Host: indexer.name.xns` header.
 
+Address records are owned by XNS Resolver. `A` returns a synthetic address from
+the virtual range, and `AAAA` returns no address. Other DNS record types are
+forwarded over TCP to port 53 on the resolved Tor or I2P destination, so a
+service can publish records such as TXT without controlling XNS routing.
+
 Subdomain existence is decided by the service's virtual-host configuration,
 not by XNS Resolver. The cache is memory-only and is empty after every restart.
 Finalized records are cached until their estimated expiration; records with

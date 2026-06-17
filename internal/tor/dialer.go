@@ -2,6 +2,7 @@ package tor
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/url"
@@ -25,6 +26,10 @@ func (d *Dialer) DialContext(ctx context.Context, destination string, port uint1
 		return nil, fmt.Errorf("Tor -> %s: %w", addr, err)
 	}
 	return conn, nil
+}
+
+func (d *Dialer) DialPacket(context.Context, string, uint16, uint16) (net.PacketConn, error) {
+	return nil, errors.New("Tor does not support UDP")
 }
 
 func (d *Dialer) Close() error {

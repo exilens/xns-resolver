@@ -23,6 +23,7 @@ type Dialer struct {
 	session net.Conn
 	reader  *bufio.Reader
 	mu      sync.Mutex
+	packet  *packetSession
 	closed  bool
 }
 
@@ -88,6 +89,26 @@ func (d *Dialer) DialContext(ctx context.Context, destination string, port uint1
 	return &bufferedConn{Conn: conn, reader: reader}, nil
 }
 
+func (d *Dialer) DialPacket(ctx context.Context, destination string, fromPort, toPort uint16) (net.PacketConn, error) {
+	d.mu.Lock()
+	if d.closed {
+		d.mu.Unlock()
+		return nil, errors.New("SAM session is closed")
+	}
+	packet := d.packet
+	if packet == nil {
+		var err error
+		packet, err = newPacketSession(ctx, d.address)
+		if err != nil {
+			d.mu.Unlock()
+			return nil, err
+		}
+		d.packet = packet
+	}
+	d.mu.Unlock()
+	return packet.Dial(ctx, destination, fromPort, toPort)
+}
+
 func (d *Dialer) Close() error {
 	d.mu.Lock()
 	if d.closed {
@@ -96,8 +117,13 @@ func (d *Dialer) Close() error {
 	}
 	d.closed = true
 	conn := d.session
+	packet := d.packet
 	d.mu.Unlock()
-	return conn.Close()
+	var err error
+	if packet != nil {
+		err = packet.Close()
+	}
+	return errors.Join(err, conn.Close())
 }
 
 func (d *Dialer) watchSession() {

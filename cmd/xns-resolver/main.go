@@ -18,9 +18,8 @@ import (
 	"github.com/exilens/xns-resolver/internal/engine"
 	"github.com/exilens/xns-resolver/internal/mapstore"
 	"github.com/exilens/xns-resolver/internal/netdial"
-	"github.com/exilens/xns-resolver/internal/sam"
+	"github.com/exilens/xns-resolver/internal/socks"
 	"github.com/exilens/xns-resolver/internal/system"
-	"github.com/exilens/xns-resolver/internal/tor"
 	"github.com/exilens/xns-resolver/internal/xns"
 )
 
@@ -36,7 +35,7 @@ type options struct {
 	indexer  string
 	network  string
 	torSocks string
-	i2pSAM   string
+	i2pSocks string
 	tun      string
 	cidr     string
 	gateway  string
@@ -49,7 +48,7 @@ type config struct {
 	gateway  netip.Addr
 	dns      *net.UDPAddr
 	torSocks *url.URL
-	i2pSAM   string
+	i2pSocks *url.URL
 }
 
 func main() {
@@ -83,7 +82,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	transport, err := newTransport(ctx, opts.network, cfg)
+	transport, err := newTransport(opts.network, cfg)
 	if err != nil {
 		return err
 	}
@@ -136,7 +135,7 @@ func parseArgs() (options, error) {
 	flag.StringVar(&opts.indexer, "indexer", "", "XNS indeXer URL")
 	flag.StringVar(&opts.network, "network", "", "destination network: tor or i2p")
 	flag.StringVar(&opts.torSocks, "tor-socks", "", "Tor SOCKS5 proxy URL")
-	flag.StringVar(&opts.i2pSAM, "i2p-sam", "", "I2P SAM TCP address")
+	flag.StringVar(&opts.i2pSocks, "i2p-socks", "", "I2P SOCKS5 proxy URL")
 	flag.StringVar(&opts.tun, "tun", defaultTUN, "TUN interface name")
 	flag.StringVar(&opts.cidr, "cidr", defaultCIDR, "virtual IPv4 range")
 	flag.StringVar(&opts.gateway, "gateway", defaultGateway, "virtual gateway address")
@@ -192,28 +191,26 @@ func validate(opts options) (config, error) {
 		if opts.torSocks == "" {
 			return cfg, errors.New("--tor-socks is required for --network tor")
 		}
-		if opts.i2pSAM != "" {
-			return cfg, errors.New("--i2p-sam cannot be used with --network tor")
+		if opts.i2pSocks != "" {
+			return cfg, errors.New("--i2p-socks cannot be used with --network tor")
 		}
-		proxy, err := url.Parse(opts.torSocks)
+		proxy, err := parseSocksURL("--tor-socks", opts.torSocks)
 		if err != nil {
-			return cfg, fmt.Errorf("--tor-socks: %w", err)
-		}
-		if proxy.Scheme != "socks5" || proxy.Host == "" {
-			return cfg, errors.New("--tor-socks must be a socks5 URL")
+			return cfg, err
 		}
 		cfg.torSocks = proxy
 	case "i2p":
-		if opts.i2pSAM == "" {
-			return cfg, errors.New("--i2p-sam is required for --network i2p")
+		if opts.i2pSocks == "" {
+			return cfg, errors.New("--i2p-socks is required for --network i2p")
 		}
 		if opts.torSocks != "" {
 			return cfg, errors.New("--tor-socks cannot be used with --network i2p")
 		}
-		if err := validTCPAddress(opts.i2pSAM); err != nil {
-			return cfg, fmt.Errorf("--i2p-sam: %w", err)
+		proxy, err := parseSocksURL("--i2p-socks", opts.i2pSocks)
+		if err != nil {
+			return cfg, err
 		}
-		cfg.i2pSAM = opts.i2pSAM
+		cfg.i2pSocks = proxy
 	default:
 		return cfg, errors.New("--network must be tor or i2p")
 	}
@@ -224,39 +221,31 @@ func validate(opts options) (config, error) {
 	return cfg, nil
 }
 
-func newTransport(ctx context.Context, network string, cfg config) (netdial.Transport, error) {
+func newTransport(network string, cfg config) (netdial.Transport, error) {
 	switch network {
 	case "tor":
-		return tor.New(cfg.torSocks), nil
+		return socks.New("Tor", cfg.torSocks), nil
 	case "i2p":
-		transport, err := sam.New(ctx, cfg.i2pSAM)
-		if err != nil {
-			return nil, err
-		}
-		return transport, nil
+		return socks.New("I2P", cfg.i2pSocks), nil
 	default:
 		return nil, errors.New("unsupported network")
 	}
 }
 
-func validTCPAddress(address string) error {
-	host, port, err := net.SplitHostPort(address)
+func parseSocksURL(flagName string, raw string) (*url.URL, error) {
+	proxy, err := url.Parse(raw)
 	if err != nil {
-		return err
+		return nil, fmt.Errorf("%s: %w", flagName, err)
 	}
-	if host == "" {
-		return errors.New("host is required")
+	if proxy.Scheme != "socks5" || proxy.Host == "" {
+		return nil, fmt.Errorf("%s must be a socks5 URL", flagName)
 	}
-	number, err := net.LookupPort("tcp", port)
-	if err != nil || number < 1 || number > 65535 {
-		return errors.New("valid TCP port is required")
-	}
-	return nil
+	return proxy, nil
 }
 
 func transportAddress(opts options, cfg config) string {
 	if opts.network == "tor" {
 		return cfg.torSocks.String()
 	}
-	return cfg.i2pSAM
+	return cfg.i2pSocks.String()
 }

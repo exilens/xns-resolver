@@ -1,4 +1,4 @@
-package tor
+package socks
 
 import (
 	"context"
@@ -11,18 +11,19 @@ import (
 )
 
 type Dialer struct {
+	label string
 	proxy *url.URL
 }
 
-func New(proxy *url.URL) *Dialer {
-	return &Dialer{proxy: proxy}
+func New(label string, proxy *url.URL) *Dialer {
+	return &Dialer{label: label, proxy: proxy}
 }
 
 func (d *Dialer) DialContext(ctx context.Context, destination string, port uint16) (net.Conn, error) {
 	addr := net.JoinHostPort(destination, strconv.Itoa(int(port)))
-	conn, err := dialSocks(ctx, d.proxy, addr)
+	conn, err := dial(ctx, d.proxy, addr)
 	if err != nil {
-		return nil, fmt.Errorf("Tor -> %s: %w", addr, err)
+		return nil, fmt.Errorf("%s -> %s: %w", d.label, addr, err)
 	}
 	return conn, nil
 }
@@ -31,7 +32,7 @@ func (d *Dialer) Close() error {
 	return nil
 }
 
-func dialSocks(ctx context.Context, u *url.URL, addr string) (net.Conn, error) {
+func dial(ctx context.Context, u *url.URL, addr string) (net.Conn, error) {
 	var auth *xproxy.Auth
 	if u.User != nil {
 		auth = &xproxy.Auth{User: u.User.Username()}
@@ -44,6 +45,7 @@ func dialSocks(ctx context.Context, u *url.URL, addr string) (net.Conn, error) {
 	if cd, ok := d.(xproxy.ContextDialer); ok {
 		return cd.DialContext(ctx, "tcp", addr)
 	}
+
 	type result struct {
 		conn net.Conn
 		err  error
@@ -53,6 +55,7 @@ func dialSocks(ctx context.Context, u *url.URL, addr string) (net.Conn, error) {
 		conn, err := d.Dial("tcp", addr)
 		ch <- result{conn: conn, err: err}
 	}()
+
 	select {
 	case <-ctx.Done():
 		return nil, ctx.Err()

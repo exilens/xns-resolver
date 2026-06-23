@@ -118,11 +118,11 @@ func validHostLabel(label string) bool {
 		return false
 	}
 	for i := range len(label) {
-		if !isNameEdge(label[i]) && label[i] != '-' {
+		if !isNameEdge(label[i]) && label[i] != '-' && label[i] != '_' {
 			return false
 		}
 	}
-	return isNameEdge(label[0]) && isNameEdge(label[len(label)-1])
+	return (isNameEdge(label[0]) || label[0] == '_') && isNameEdge(label[len(label)-1])
 }
 
 func invalidPoint(reason string) error {

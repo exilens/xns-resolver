@@ -1,6 +1,6 @@
 module github.com/exilens/xns-resolver
 
-go 1.26.2
+go 1.26
 
 require (
 	github.com/miekg/dns v1.1.72

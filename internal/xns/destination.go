@@ -84,7 +84,7 @@ func I2PFromOwnerKey(ownerHex string) (string, error) {
 		return "", err
 	}
 	raw := make([]byte, 35)
-	raw[1] = 7
+	raw[1] = 11
 	raw[2] = 11
 	copy(raw[3:], owner)
 	sum := crc32.ChecksumIEEE(owner)

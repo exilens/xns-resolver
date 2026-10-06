@@ -6,7 +6,6 @@ import (
 	"flag"
 	"fmt"
 	"log"
-	"net"
 	"net/netip"
 	"net/url"
 	"os"
@@ -32,23 +31,25 @@ const (
 )
 
 type options struct {
-	indexer  string
-	network  string
-	torSocks string
-	i2pSocks string
-	tun      string
-	cidr     string
-	gateway  string
-	dns      string
-	mtu      uint
+	indexer     string
+	network     string
+	torSocks    string
+	i2pSocks    string
+	tun         string
+	cidr        string
+	gateway     string
+	dns         string
+	upstreamDNS string
+	mtu         uint
 }
 
 type config struct {
-	prefix   netip.Prefix
-	gateway  netip.Addr
-	dns      *net.UDPAddr
-	torSocks *url.URL
-	i2pSocks *url.URL
+	prefix      netip.Prefix
+	gateway     netip.Addr
+	dns         netip.AddrPort
+	upstreamDNS string
+	torSocks    *url.URL
+	i2pSocks    *url.URL
 }
 
 func main() {
@@ -89,11 +90,9 @@ func run() error {
 	defer transport.Close()
 
 	setup := system.Setup{
-		TUN:       opts.tun,
-		Prefix:    cfg.prefix,
-		Gateway:   cfg.gateway,
-		DNSListen: cfg.dns.String(),
-		Domains:   []string{".xns"},
+		TUN:     opts.tun,
+		Prefix:  cfg.prefix,
+		Gateway: cfg.gateway,
 	}
 
 	eng, err := engine.Start(ctx, opts.tun, uint32(opts.mtu), store, transport)
@@ -112,7 +111,7 @@ func run() error {
 		}
 	}()
 
-	dnsSrv := dnsx.New(cfg.dns.String(), store, transport)
+	dnsSrv := dnsx.New(cfg.dns.String(), store, transport, cfg.upstreamDNS)
 	if err := dnsSrv.Start(); err != nil {
 		return err
 	}
@@ -140,6 +139,7 @@ func parseArgs() (options, error) {
 	flag.StringVar(&opts.cidr, "cidr", defaultCIDR, "virtual IPv4 range")
 	flag.StringVar(&opts.gateway, "gateway", defaultGateway, "virtual gateway address")
 	flag.StringVar(&opts.dns, "dns", defaultDNS, "DNS listen address")
+	flag.StringVar(&opts.upstreamDNS, "upstream-dns", "", "optional upstream DNS IP[:port] for non-XNS queries (default port 53)")
 	flag.UintVar(&opts.mtu, "mtu", defaultMTU, "TUN MTU")
 	flag.Parse()
 	if flag.NArg() != 0 {
@@ -171,13 +171,24 @@ func validate(opts options) (config, error) {
 	if !gateway.Is4() || !prefix.Contains(gateway) {
 		return cfg, errors.New("--gateway must be inside --cidr")
 	}
-	dnsAddr, err := net.ResolveUDPAddr("udp", opts.dns)
+	dnsAddr, err := netip.ParseAddrPort(opts.dns)
 	if err != nil {
 		return cfg, fmt.Errorf("--dns: %w", err)
 	}
-	dnsIP, ok := netip.AddrFromSlice(dnsAddr.IP)
-	if !ok || dnsIP.Unmap() != gateway || dnsAddr.Port != 53 {
-		return cfg, errors.New("--dns must use port 53 on --gateway")
+	if dnsAddr.Port() == 0 || dnsAddr.Addr().IsMulticast() {
+		return cfg, errors.New("--dns must use a unicast or wildcard IP and a nonzero port")
+	}
+	if opts.upstreamDNS != "" {
+		upstream, err := parseUpstreamDNS(opts.upstreamDNS)
+		if err != nil {
+			return cfg, err
+		}
+		listenIP := dnsAddr.Addr().Unmap()
+		if upstream.Port() == dnsAddr.Port() && (upstream.Addr().Unmap() == listenIP ||
+			(listenIP.IsUnspecified() && (upstream.Addr().IsLoopback() || upstream.Addr().Unmap() == gateway))) {
+			return cfg, errors.New("--upstream-dns must not point to the DNS listener")
+		}
+		cfg.upstreamDNS = upstream.String()
 	}
 	if opts.tun == "" {
 		return cfg, errors.New("--tun is required")
@@ -219,6 +230,22 @@ func validate(opts options) (config, error) {
 	cfg.gateway = gateway
 	cfg.dns = dnsAddr
 	return cfg, nil
+}
+
+func parseUpstreamDNS(raw string) (netip.AddrPort, error) {
+	addr, err := netip.ParseAddrPort(raw)
+	if err != nil {
+		ip, ipErr := netip.ParseAddr(raw)
+		if ipErr != nil {
+			return netip.AddrPort{}, errors.New("--upstream-dns must be an IP address, optionally with a port")
+		}
+		addr = netip.AddrPortFrom(ip, 53)
+	}
+	addr = netip.AddrPortFrom(addr.Addr().Unmap(), addr.Port())
+	if addr.Port() == 0 || addr.Addr().IsUnspecified() || addr.Addr().IsMulticast() {
+		return netip.AddrPort{}, errors.New("--upstream-dns must use a unicast IP and a nonzero port")
+	}
+	return addr, nil
 }
 
 func newTransport(network string, cfg config) (netdial.Transport, error) {

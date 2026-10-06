@@ -8,18 +8,15 @@ import (
 	"log"
 	"net"
 	"net/netip"
-	"os/exec"
 	"strings"
 
 	"github.com/vishvananda/netlink"
 )
 
 type Setup struct {
-	TUN       string
-	Prefix    netip.Prefix
-	Gateway   netip.Addr
-	DNSListen string
-	Domains   []string
+	TUN     string
+	Prefix  netip.Prefix
+	Gateway netip.Addr
 }
 
 func Up(cfg Setup) error {
@@ -46,15 +43,11 @@ func Up(cfg Setup) error {
 	}
 	log.Printf("network ready: %s %s route %s", cfg.TUN, cfg.Gateway, cfg.Prefix)
 
-	if err := ResolvedUp(cfg); err != nil {
-		return err
-	}
 	return nil
 }
 
 func Down(cfg Setup) error {
 	var out error
-	out = errors.Join(out, ResolvedDown(cfg.TUN))
 	if link, err := netlink.LinkByName(cfg.TUN); err == nil {
 		dst := net.IPNet{IP: net.IP(cfg.Prefix.Addr().AsSlice()).To4(), Mask: net.CIDRMask(cfg.Prefix.Bits(), 32)}
 		if err := netlink.RouteDel(&netlink.Route{LinkIndex: link.Attrs().Index, Dst: &dst}); err != nil && !osIsNotExist(err) {
@@ -79,67 +72,6 @@ func ensureAddr(link netlink.Link, want *netlink.Addr) error {
 	}
 	if err := netlink.AddrAdd(link, want); err != nil && !osIsExist(err) {
 		return fmt.Errorf("add addr %s: %w", want, err)
-	}
-	return nil
-}
-
-func ResolvedUp(cfg Setup) error {
-	host, _, err := net.SplitHostPort(cfg.DNSListen)
-	if err != nil {
-		return err
-	}
-	if host == "" {
-		return errors.New("dns.listen must include an explicit host when managing systemd-resolved")
-	}
-
-	args := []string{"dns", cfg.TUN, cfg.DNSListen}
-	if err := run("resolvectl", args...); err != nil {
-		return err
-	}
-
-	domains := make([]string, 0, len(cfg.Domains))
-	for _, d := range cfg.Domains {
-		d = strings.TrimPrefix(strings.TrimSuffix(d, "."), ".")
-		if d != "" {
-			domains = append(domains, "~"+d)
-		}
-	}
-	if len(domains) > 0 {
-		args = append([]string{"domain", cfg.TUN}, domains...)
-		if err := run("resolvectl", args...); err != nil {
-			return err
-		}
-	}
-	if err := run("resolvectl", "dnsovertls", cfg.TUN, "false"); err != nil {
-		return err
-	}
-	if err := run("resolvectl", "dnssec", cfg.TUN, "false"); err != nil {
-		return err
-	}
-	if err := run("resolvectl", "llmnr", cfg.TUN, "false"); err != nil {
-		return err
-	}
-	if err := run("resolvectl", "mdns", cfg.TUN, "false"); err != nil {
-		return err
-	}
-	if err := run("resolvectl", "default-route", cfg.TUN, "false"); err != nil {
-		return err
-	}
-	log.Printf("systemd-resolved route-only domains on %s: %s", cfg.TUN, strings.Join(domains, " "))
-	return nil
-}
-
-func ResolvedDown(iface string) error {
-	var out error
-	out = errors.Join(out, run("resolvectl", "revert", iface))
-	return out
-}
-
-func run(name string, args ...string) error {
-	cmd := exec.Command(name, args...)
-	b, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("%s %s: %w: %s", name, strings.Join(args, " "), err, strings.TrimSpace(string(b)))
 	}
 	return nil
 }

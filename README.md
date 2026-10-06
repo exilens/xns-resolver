@@ -8,13 +8,6 @@ application-specific XNS support.
 It is a fork of [TSR](https://github.com/aeeravsar/TSR), reduced to the single
 purpose of resolving XNS names.
 
-## Requirements
-
-- Linux with `systemd-resolved`
-- Tor or I2P with a SOCKS5 listener
-- Root privileges for TUN and routing setup
-- An XNS indeXer URL
-
 ## Build
 
 ```sh
@@ -41,7 +34,8 @@ sudo ./xns-resolver \
   --i2p-socks <i2p-socks-url>
 ```
 
-Once running, applications can use `name.xns` and its subdomains directly. For
+After configuring your DNS resolver as described below, applications can use
+`name.xns` and its subdomains directly. For
 `indexer.name.xns`, the rightmost label before `.xns` is the claimed XNS name,
 while `indexer` is preserved for the application. The HTTP service receives
 the original `Host: indexer.name.xns` header.
@@ -62,16 +56,57 @@ an encrypted LeaseSet2 destination and opens each connection through the
 specified I2P SOCKS5 listener. An I2P service created with
 [xns-i2p](https://github.com/exilens/xns-i2p) must publish LeaseSet type 5.
 
+## DNS setup
+
+XNS Resolver serves DNS over UDP and TCP on `10.204.0.1:53` by default. It
+creates the TUN interface and route, but does not change your system's DNS
+configuration. You can choose another listener with `--dns IP:PORT`, such as
+`--dns 127.0.0.1:5353`.
+
+By default, only `.xns` names are served. Other queries receive `REFUSED`, and
+no upstream DNS requests are made. Configure your existing resolver to forward
+the `xns` zone to XNS Resolver while keeping its usual upstreams for other names.
+For example, dnsmasq can use:
+
 ```text
---network tor|i2p   destination network
---indexer URL       XNS indeXer URL
---tor-socks URL     Tor SOCKS5 URL, required for Tor
---i2p-socks URL     I2P SOCKS5 URL, required for I2P
---tun NAME          TUN interface name
---cidr CIDR         virtual IPv4 range
---gateway IP        virtual gateway address
---dns HOST:PORT     DNS listener on the virtual gateway
---mtu N             TUN MTU
+server=/xns/10.204.0.1
+```
+
+Alternatively, use XNS Resolver for all DNS queries and explicitly provide an
+upstream for non-XNS names:
+
+```sh
+sudo ./xns-resolver \
+  --network tor \
+  --indexer https://indexer.xns.rocks \
+  --tor-socks socks5://127.0.0.1:9050 \
+  --upstream-dns 192.168.1.1
+```
+
+Then configure your system's DNS server as `10.204.0.1`. Replace `192.168.1.1`
+with your chosen upstream DNS server. `--upstream-dns` accepts an IPv4 or IPv6
+address with an optional port (default 53), for example `127.0.0.1:5300` or
+`[::1]:5300`. It never discovers upstreams from the system configuration.
+
+Non-XNS forwarding connects directly to that upstream, using UDP or TCP; it
+does not go through the Tor/I2P SOCKS transport. Omit `--upstream-dns` when you
+do not want this forwarding. XNS queries, including failed lookups, are never
+sent to the upstream. Ensure the upstream does not forward queries back to
+XNS Resolver.
+
+## Options
+
+```text
+--network tor|i2p         destination network
+--indexer URL             XNS indeXer URL
+--tor-socks URL           Tor SOCKS5 URL, required for Tor
+--i2p-socks URL           I2P SOCKS5 URL, required for I2P
+--tun NAME                TUN interface name
+--cidr CIDR               virtual IPv4 range
+--gateway IP              virtual gateway address
+--dns IP:PORT             UDP/TCP DNS listener (default 10.204.0.1:53)
+--upstream-dns IP[:PORT]  optional upstream for non-XNS names; disabled by default
+--mtu N                   TUN MTU
 ```
 
 ## XNS

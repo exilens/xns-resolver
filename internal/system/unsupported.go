@@ -8,11 +8,9 @@ import (
 )
 
 type Setup struct {
-	TUN       string
-	Prefix    netip.Prefix
-	Gateway   netip.Addr
-	DNSListen string
-	Domains   []string
+	TUN     string
+	Prefix  netip.Prefix
+	Gateway netip.Addr
 }
 
 func Up(Setup) error {
